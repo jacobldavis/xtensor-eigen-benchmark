@@ -340,7 +340,110 @@ double cubic_interp_eval(const cubic_interp *interp, double t)
     return VCUBIC(a, x);
 }
 
+
 namespace CubicInterpolation {
+    
+    // Eigen interpolation structure
+    struct EigenCubicInterp {
+        double f, t0;
+        int length, n;
+        Eigen::MatrixXd coefficients;  // Store precomputed coefficients
+        
+        EigenCubicInterp(const Eigen::VectorXd& data, double tmin, double dt) 
+            : n(data.size()), length(n + 6) {
+            f = 1.0 / dt;
+            t0 = 3 - f * tmin;
+            coefficients.resize(length, 4);
+            
+            // Precompute coefficients for each segment
+            for (int i = 0; i < length; i++) {
+                Eigen::Vector4d z;
+                for (int j = 0; j < 4; j++) {
+                    int idx = std::max(0, std::min(i + j - 4, n - 1));
+                    z[j] = data[idx];
+                }
+                
+                // Compute cubic coefficients
+                if (!std::isfinite(z[1] + z[2])) {
+                    coefficients(i, 0) = 0; coefficients(i, 1) = 0; 
+                    coefficients(i, 2) = 0; coefficients(i, 3) = z[1];
+                } else if (!std::isfinite(z[0] + z[3])) {
+                    coefficients(i, 0) = 0; coefficients(i, 1) = 0; 
+                    coefficients(i, 2) = z[2] - z[1]; coefficients(i, 3) = z[1];
+                } else {
+                    coefficients(i, 0) = 1.5 * (z[1] - z[2]) + 0.5 * (z[3] - z[0]);
+                    coefficients(i, 1) = z[0] - 2.5 * z[1] + 2 * z[2] - 0.5 * z[3];
+                    coefficients(i, 2) = 0.5 * (z[2] - z[0]);
+                    coefficients(i, 3) = z[1];
+                }
+            }
+        }
+        
+        double eval(double t) const {
+            if (std::isnan(t)) return t;
+            
+            double x = t * f + t0;
+            x = std::max(0.0, std::min(x, (double)(length - 1)));
+            int ix = (int)floor(x);
+            x -= ix;
+            
+            const auto& a = coefficients.row(ix);
+            return ((a[0] * x + a[1]) * x + a[2]) * x + a[3];
+        }
+    };
+    
+    // xtensor interpolation structure
+    struct XtensorCubicInterp {
+        double f, t0;
+        int length, n;
+        xt::xarray<double> coefficients;  // Store precomputed coefficients
+        
+        XtensorCubicInterp(const xt::xarray<double>& data, double tmin, double dt) 
+            : n(data.size()), length(n + 6) {
+            f = 1.0 / dt;
+            t0 = 3 - f * tmin;
+            coefficients = xt::zeros<double>({length, 4});
+            
+            // Precompute coefficients for each segment
+            for (int i = 0; i < length; i++) {
+                std::vector<double> z(4);
+                for (int j = 0; j < 4; j++) {
+                    int idx = std::max(0, std::min(i + j - 4, n - 1));
+                    z[j] = data[idx];
+                }
+                
+                // Compute cubic coefficients
+                if (!std::isfinite(z[1] + z[2])) {
+                    coefficients(i, 0) = 0; coefficients(i, 1) = 0;
+                    coefficients(i, 2) = 0; coefficients(i, 3) = z[1];
+                } else if (!std::isfinite(z[0] + z[3])) {
+                    coefficients(i, 0) = 0; coefficients(i, 1) = 0;
+                    coefficients(i, 2) = z[2] - z[1]; coefficients(i, 3) = z[1];
+                } else {
+                    coefficients(i, 0) = 1.5 * (z[1] - z[2]) + 0.5 * (z[3] - z[0]);
+                    coefficients(i, 1) = z[0] - 2.5 * z[1] + 2 * z[2] - 0.5 * z[3];
+                    coefficients(i, 2) = 0.5 * (z[2] - z[0]);
+                    coefficients(i, 3) = z[1];
+                }
+            }
+        }
+        
+        double eval(double t) const {
+            if (std::isnan(t)) return t;
+            
+            double x = t * f + t0;
+            x = std::max(0.0, std::min(x, (double)(length - 1)));
+            int ix = (int)floor(x);
+            x -= ix;
+            
+            double a0 = coefficients(ix, 0);
+            double a1 = coefficients(ix, 1);
+            double a2 = coefficients(ix, 2);
+            double a3 = coefficients(ix, 3);
+            
+            return ((a0 * x + a1) * x + a2) * x + a3;
+        }
+    };
     
     void c_cubic_interpolate(const vector<double>& eval_points, 
                             cubic_interp* interp, 
@@ -350,95 +453,19 @@ namespace CubicInterpolation {
         }
     }
     
-    // Eigen implementation
     void eigen_cubic_interpolate(const vector<double>& eval_points,
-                                const Eigen::VectorXd& data,
-                                double tmin, double dt,
+                                const EigenCubicInterp& interp,
                                 Eigen::VectorXd& results) {
-        double f = 1.0 / dt;
-        double t0 = 3 - f * tmin;
-        int n = data.size();
-        
         for (size_t i = 0; i < eval_points.size(); ++i) {
-            double t = eval_points[i];
-            if (std::isnan(t)) {
-                results[i] = t;
-                continue;
-            }
-            
-            double x = t * f + t0;
-            x = std::max(0.0, std::min(x, (double)(n + 5)));
-            int ix = (int)floor(x);
-            x -= ix;
-            
-            // Get 4 data points for cubic interpolation
-            Eigen::Vector4d z;
-            for (int j = 0; j < 4; j++) {
-                int idx = std::max(0, std::min(ix + j - 4, n - 1));
-                z[j] = data[idx];
-            }
-            
-            // Compute cubic coefficients
-            Eigen::Vector4d a;
-            if (!std::isfinite(z[1] + z[2])) {
-                a << 0, 0, 0, z[1];
-            } else if (!std::isfinite(z[0] + z[3])) {
-                a << 0, 0, z[2] - z[1], z[1];
-            } else {
-                a[0] = 1.5 * (z[1] - z[2]) + 0.5 * (z[3] - z[0]);
-                a[1] = z[0] - 2.5 * z[1] + 2 * z[2] - 0.5 * z[3];
-                a[2] = 0.5 * (z[2] - z[0]);
-                a[3] = z[1];
-            }
-            
-            // Evaluate cubic polynomial
-            results[i] = ((a[0] * x + a[1]) * x + a[2]) * x + a[3];
+            results[i] = interp.eval(eval_points[i]);
         }
     }
     
-    // xtensor implementation
     void xtensor_cubic_interpolate(const vector<double>& eval_points,
-                                  const xt::xarray<double>& data,
-                                  double tmin, double dt,
+                                  const XtensorCubicInterp& interp,
                                   xt::xarray<double>& results) {
-        double f = 1.0 / dt;
-        double t0 = 3 - f * tmin;
-        int n = data.size();
-        
         for (size_t i = 0; i < eval_points.size(); ++i) {
-            double t = eval_points[i];
-            if (std::isnan(t)) {
-                results[i] = t;
-                continue;
-            }
-            
-            double x = t * f + t0;
-            x = std::max(0.0, std::min(x, (double)(n + 5)));
-            int ix = (int)floor(x);
-            x -= ix;
-            
-            // Get 4 data points for cubic interpolation
-            std::vector<double> z(4);
-            for (int j = 0; j < 4; j++) {
-                int idx = std::max(0, std::min(ix + j - 4, n - 1));
-                z[j] = data[idx];
-            }
-            
-            // Compute cubic coefficients
-            std::vector<double> a(4);
-            if (!std::isfinite(z[1] + z[2])) {
-                a[0] = 0; a[1] = 0; a[2] = 0; a[3] = z[1];
-            } else if (!std::isfinite(z[0] + z[3])) {
-                a[0] = 0; a[1] = 0; a[2] = z[2] - z[1]; a[3] = z[1];
-            } else {
-                a[0] = 1.5 * (z[1] - z[2]) + 0.5 * (z[3] - z[0]);
-                a[1] = z[0] - 2.5 * z[1] + 2 * z[2] - 0.5 * z[3];
-                a[2] = 0.5 * (z[2] - z[0]);
-                a[3] = z[1];
-            }
-            
-            // Evaluate cubic polynomial
-            results[i] = ((a[0] * x + a[1]) * x + a[2]) * x + a[3];
+            results[i] = interp.eval(eval_points[i]);
         }
     }
     
@@ -457,16 +484,30 @@ namespace CubicInterpolation {
             data_c[i] = sin(2 * M_PI * t) + 0.5 * cos(4 * M_PI * t);
         }
         
-        // Create evaluation points
+        // Create evaluation points (outside the timing loop)
         vector<double> eval_points(n_eval);
         for (size_t i = 0; i < n_eval; ++i) {
-            eval_points[i] = tmin + (tmax - tmin) * dist(rng);
+            eval_points[i] = tmin + (tmax - tmin) * (dist(rng) + 1.0) / 2.0;  // Map to [0,1] range
         }
         
-        // C benchmark
+        // Initialize interpolation structures (outside timing)
         cubic_interp* interp_c = cubic_interp_init(data_c.data(), n_data, tmin, dt);
-        vector<double> results_c(n_eval);
         
+        Eigen::VectorXd data_eigen(n_data);
+        for (size_t i = 0; i < n_data; ++i) data_eigen[i] = data_c[i];
+        EigenCubicInterp interp_eigen(data_eigen, tmin, dt);
+        
+        std::vector<size_t> shape_data = {n_data};
+        xt::xarray<double> data_xt = xt::zeros<double>(shape_data);
+        for (size_t i = 0; i < n_data; ++i) data_xt[i] = data_c[i];
+        XtensorCubicInterp interp_xt(data_xt, tmin, dt);
+        
+        // Prepare result containers
+        vector<double> results_c(n_eval);
+        Eigen::VectorXd results_eigen(n_eval);
+        xt::xarray<double> results_xt = xt::zeros<double>({n_eval});
+        
+        // C benchmark - only interpolation evaluation
         timer.start();
         for (int i = 0; i < iterations; ++i) {
             c_cubic_interpolate(eval_points, interp_c, results_c);
@@ -474,31 +515,18 @@ namespace CubicInterpolation {
         }
         double time_c = timer.stop();
         
-        cubic_interp_free(interp_c);
-        
-        // Eigen benchmark
-        Eigen::VectorXd data_eigen(n_data);
-        for (size_t i = 0; i < n_data; ++i) data_eigen[i] = data_c[i];
-        Eigen::VectorXd results_eigen(n_eval);
-        
+        // Eigen benchmark - only interpolation evaluation
         timer.start();
         for (int i = 0; i < iterations; ++i) {
-            eigen_cubic_interpolate(eval_points, data_eigen, tmin, dt, results_eigen);
+            eigen_cubic_interpolate(eval_points, interp_eigen, results_eigen);
             do_not_optimize(results_eigen[0]);  
         }
         double time_eigen = timer.stop();
         
-        // xtensor benchmark
-        std::vector<size_t> shape_data = {n_data};
-        std::vector<size_t> shape_results = {n_eval};
-        xt::xarray<double> data_xt = xt::zeros<double>(shape_data);
-        xt::xarray<double> results_xt = xt::zeros<double>(shape_results);
-        
-        for (size_t i = 0; i < n_data; ++i) data_xt[i] = data_c[i];
-        
+        // xtensor benchmark - only interpolation evaluation
         timer.start();
         for (int i = 0; i < iterations; ++i) {
-            xtensor_cubic_interpolate(eval_points, data_xt, tmin, dt, results_xt);
+            xtensor_cubic_interpolate(eval_points, interp_xt, results_xt);
             do_not_optimize(results_xt[0]);  
         }
         double time_xt = timer.stop();
@@ -515,6 +543,9 @@ namespace CubicInterpolation {
         if (max_diff > 1e-10) {
             cout << "  Warning: Max difference between C and Eigen: " << max_diff << "\n";
         }
+        
+        // Cleanup
+        cubic_interp_free(interp_c);
     }
 }
 
