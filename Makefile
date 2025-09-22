@@ -1,19 +1,20 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -O3 -march=native
+DEFINES = -DXTENSOR_USE_XSIMD
 SOURCE = main.cpp
 TARGET = benchmark
 
-INCLUDES = -I/usr/include/eigen3 -I/usr/local/include
+INCLUDES = -I/usr/include/eigen3 -I/usr/include
 
 LIBS = -lm
 
 $(TARGET): $(SOURCE)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SOURCE) -o $(TARGET) $(LIBS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) $(SOURCE) -o $(TARGET) $(LIBS)
 
 clean:
-	rm -f $(TARGET) benchmark_debug benchmark_fast
+	rm -f $(TARGET)
 
 run: $(TARGET)
 	./$(TARGET)
 
-.PHONY: debug fast clean test
+.PHONY: clean
