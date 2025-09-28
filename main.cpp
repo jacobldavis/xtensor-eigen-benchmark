@@ -9,13 +9,14 @@
 #include <Eigen/Dense>
 #include <Eigen/Core>
 
-// xtensor includes  
+// xtensor includes
 #include <xtensor/xarray.hpp>
 #include <xtensor/xio.hpp>
 #include <xtensor/xmath.hpp>
 #include <xtensor/xrandom.hpp>
 #include <xtensor/xview.hpp>
 #include <xtensor/xbuilder.hpp>
+#include <xsimd/xsimd.hpp>
 
 using namespace std;
 using namespace std::chrono;
@@ -549,101 +550,6 @@ namespace CubicInterpolation {
     }
 }
 
-// 3D Coordinate Transformations
-namespace CoordinateTransforms {
-    
-    struct Vec3 { double x, y, z; };
-    
-    // Rotation matrix around Z-axis
-    void c_rotation_z(const vector<Vec3>& points, vector<Vec3>& result, double angle) {
-        double cos_a = cos(angle);
-        double sin_a = sin(angle);
-        
-        for (size_t i = 0; i < points.size(); ++i) {
-            result[i].x = cos_a * points[i].x - sin_a * points[i].y;
-            result[i].y = sin_a * points[i].x + cos_a * points[i].y;
-            result[i].z = points[i].z;
-        }
-    }
-    
-    void benchmark(size_t n_points, int iterations) {
-        cout << "\n3D Rotation Transform (n=" << n_points << "):\n";
-        
-        Timer timer;
-        double angle = 0.5;
-        
-        // Initialize data
-        vector<Vec3> points_c(n_points), result_c(n_points);
-        for (size_t i = 0; i < n_points; ++i) {
-            points_c[i] = {dist(rng), dist(rng), dist(rng)};
-        }
-        
-        // C benchmark
-        timer.start();
-        for (int i = 0; i < iterations; ++i) {
-            c_rotation_z(points_c, result_c, angle);
-            do_not_optimize(result_c[0].x);  
-        }
-        double time_c = timer.stop();
-        
-        // Eigen benchmark
-        Eigen::Matrix3d R;
-        R << cos(angle), -sin(angle), 0,
-             sin(angle),  cos(angle), 0,
-             0,           0,          1;
-        
-        Eigen::MatrixXd points_eigen(3, n_points);
-        for (size_t i = 0; i < n_points; ++i) {
-            points_eigen(0, i) = points_c[i].x;
-            points_eigen(1, i) = points_c[i].y;
-            points_eigen(2, i) = points_c[i].z;
-        }
-        
-        timer.start();
-        for (int i = 0; i < iterations; ++i) {
-            auto result_eigen = R * points_eigen;
-            do_not_optimize(result_eigen(0, 0));  
-        }
-        double time_eigen = timer.stop();
-        
-        // xtensor benchmark        
-        std::vector<size_t> shape_R = {3, 3};
-        std::vector<size_t> shape_points = {3, n_points};
-        xt::xarray<double> R_xt = xt::zeros<double>(shape_R);
-        xt::xarray<double> points_xt = xt::zeros<double>(shape_points);
-        
-        R_xt(0, 0) = cos(angle); R_xt(0, 1) = -sin(angle); R_xt(0, 2) = 0;
-        R_xt(1, 0) = sin(angle); R_xt(1, 1) =  cos(angle); R_xt(1, 2) = 0;
-        R_xt(2, 0) = 0;          R_xt(2, 1) = 0;           R_xt(2, 2) = 1;
-        
-        for (size_t i = 0; i < n_points; ++i) {
-            points_xt(0, i) = points_c[i].x;
-            points_xt(1, i) = points_c[i].y;
-            points_xt(2, i) = points_c[i].z;
-        }
-        
-        timer.start();
-        for (int iter = 0; iter < iterations; ++iter) {
-            xt::xarray<double> result_xt = xt::zeros<double>(shape_points);
-            for (size_t i = 0; i < 3; ++i) {
-                for (size_t j = 0; j < n_points; ++j) {
-                    double sum = 0.0;
-                    for (size_t k = 0; k < 3; ++k) {
-                        sum += R_xt(i, k) * points_xt(k, j);
-                    }
-                    result_xt(i, j) = sum;
-                }
-            }
-            do_not_optimize(result_xt(0, 0));  
-        }
-        double time_xt = timer.stop();
-        
-        cout << "  C:       " << fixed << setprecision(6) << time_c << "s\n";
-        cout << "  Eigen:   " << fixed << setprecision(6) << time_eigen << "s\n";
-        cout << "  xtensor: " << fixed << setprecision(6) << time_xt << "s\n";
-    }
-}
-
 int main() {        
     // Matrix-vector multiplication tests
     MatVecMul::benchmark(100, 100, 10000);
@@ -661,10 +567,6 @@ int main() {
     // Cubic interpolation
     CubicInterpolation::benchmark(1000, 10000, 100); 
     CubicInterpolation::benchmark(10000, 50000, 10); 
-    
-    // 3D coordinate transformations
-    CoordinateTransforms::benchmark(10000, 1000);
-    CoordinateTransforms::benchmark(100000, 100);
         
     return 0;
 }

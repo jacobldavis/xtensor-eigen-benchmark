@@ -9,7 +9,7 @@ INCLUDES = -I/usr/include/eigen3 -I/usr/include
 LIBS = -lm
 
 $(TARGET): $(SOURCE)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) $(SOURCE) -o $(TARGET) $(LIBS)
+	$(CXX) $(DEFINES) $(CXXFLAGS) $(INCLUDES) $(SOURCE) -o $(TARGET) $(LIBS)
 
 clean:
 	rm -f $(TARGET)
